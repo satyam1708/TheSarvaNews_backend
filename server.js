@@ -45,6 +45,20 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// ========== DEBUG /api/ping ROUTE ==========
+app.get('/api/ping', async (req, res) => {
+  try {
+    await axios.get('https://gnews.io');
+    res.status(200).json({ success: true, message: 'GNews API reachable' });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      code: error.code,
+    });
+  }
+});
+
 // ========== AUTH ROUTES ==========
 
 // Register
