@@ -1,8 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import fetch from 'node-fetch';
 import axios from 'axios';
+import axiosRetry from 'axios-retry';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
@@ -20,6 +20,13 @@ if (!API_KEY) {
   console.error('❌ ERROR: GNEWS_API_KEY is not set in environment variables!');
   process.exit(1);
 }
+
+axiosRetry(axios, {
+  retries: 3,
+  retryDelay: axiosRetry.exponentialDelay,
+  retryCondition: (err) =>
+    axiosRetry.isNetworkOrIdempotentRequestError(err) || err.code === 'ETIMEDOUT',
+});
 
 // Middleware
 app.use(cors());
@@ -108,7 +115,6 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
 
 // ========== BOOKMARK ROUTES ==========
 
-// Add bookmark
 app.post('/api/bookmarks', authenticateToken, async (req, res) => {
   const { title, description, url, image, publishedAt, source } = req.body;
   if (!title || !url)
@@ -139,7 +145,6 @@ app.post('/api/bookmarks', authenticateToken, async (req, res) => {
   }
 });
 
-// Get bookmarks
 app.get('/api/bookmarks', authenticateToken, async (req, res) => {
   try {
     const bookmarks = await prisma.bookmark.findMany({
@@ -153,7 +158,6 @@ app.get('/api/bookmarks', authenticateToken, async (req, res) => {
   }
 });
 
-// Delete bookmark
 app.delete('/api/bookmarks', authenticateToken, async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ message: 'Bookmark URL required' });
@@ -192,38 +196,36 @@ app.get('/api/news', async (req, res) => {
         : 'https://gnews.io/api/v4/search'
     );
 
-    url.searchParams.append('token', API_KEY);
-    url.searchParams.append('lang', language);
+    const params = {
+      token: API_KEY,
+      lang: language,
+    };
 
     if (mode === 'top-headlines') {
-      url.searchParams.append('country', country);
-      url.searchParams.append('topic', category);
-      if (source) url.searchParams.append('source', source);
+      params.country = country;
+      params.topic = category;
+      if (source) params.source = source;
     } else {
       if (!keyword) {
         return res.status(400).json({ error: 'Keyword is required for search mode.' });
       }
-      url.searchParams.append('q', keyword);
+      params.q = keyword;
       if (date) {
-        url.searchParams.append('from', `${date}T00:00:00Z`);
-        url.searchParams.append('to', `${date}T23:59:59Z`);
+        params.from = `${date}T00:00:00Z`;
+        params.to = `${date}T23:59:59Z`;
       }
-      url.searchParams.append('sortby', sortBy);
+      params.sortby = sortBy;
     }
 
-    const response = await fetch(url.toString());
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      return res.status(response.status).json({
-        error: errData.message || 'GNews API request failed',
-      });
-    }
+    const response = await axios.get(url.toString(), {
+      params,
+      timeout: 15000, // 15 seconds
+    });
 
-    const data = await response.json();
-    res.json(data);
+    res.json(response.data);
   } catch (error) {
-    console.error('Error in /api/news:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Error in /api/news:', error.message || error);
+    res.status(500).json({ error: 'Failed to fetch news from GNews.' });
   }
 });
 
